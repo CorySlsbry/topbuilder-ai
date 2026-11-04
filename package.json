@@ -1,0 +1,37 @@
+{
+  "name": "topbuilder-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Top Builder AI — native AI operations platform for Procore contractors. Multi-tenant SaaS on Cloud Run + Firestore.",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build && pnpm --filter worker build",
+    "start": "pnpm --filter web start",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "verify": "pnpm typecheck && pnpm --filter web build",
+    "verify:fast": "pnpm typecheck && pnpm --filter web lint",
+    "test": "pnpm -r test",
+    "test:rules": "pnpm --filter web test:rules",
+    "test:e2e": "pnpm --filter web test:e2e",
+    "emulators": "firebase emulators:start --import=./.emulator-data --export-on-exit=./.emulator-data",
+    "emulators:fresh": "firebase emulators:start",
+    "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage:rules",
+    "screenshots:capture": "node apps/web/scripts/capture-marketing-screenshots.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "seed:demo": "tsx scripts/seed-demo-tenant.ts"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "firebase-admin": "^13.0.1",
+    "prettier": "^3.3.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.4"
+  }
+}

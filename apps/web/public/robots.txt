@@ -1,0 +1,39 @@
+# Top Builder AI — robots.txt
+# Marketing site is public; everything authenticated is disallowed.
+
+User-agent: *
+Allow: /
+Allow: /security
+Allow: /privacy
+Allow: /terms
+Allow: /support
+Allow: /login
+Allow: /signup
+
+Disallow: /dashboard
+Disallow: /dashboard/
+Disallow: /api/
+Disallow: /onboarding
+Disallow: /onboarding/
+
+# AI crawlers — explicit allowlist for the public marketing surface so we show
+# up in AI-search citations (ChatGPT, Claude, Perplexity, Gemini).
+User-agent: GPTBot
+Allow: /
+Allow: /security
+Disallow: /dashboard
+Disallow: /api
+
+User-agent: ClaudeBot
+Allow: /
+Allow: /security
+Disallow: /dashboard
+Disallow: /api
+
+User-agent: PerplexityBot
+Allow: /
+Allow: /security
+Disallow: /dashboard
+Disallow: /api
+
+Sitemap: https://topbuilderai.com/sitemap.xml

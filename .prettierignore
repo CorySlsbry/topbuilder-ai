@@ -1,0 +1,11 @@
+node_modules
+.next
+dist
+build
+coverage
+*.lock
+*.log
+.firebase
+.emulator-data
+public
+*-debug.log

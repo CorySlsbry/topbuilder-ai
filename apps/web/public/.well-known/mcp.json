@@ -1,0 +1,17 @@
+{
+  "name": "Top Builder AI",
+  "description": "Read-only MCP server for Top Builder AI — six self-learning AI agents installed on the ServiceTitan a contractor already runs (Booking 24/7, Routing & Dispatch, Financial, Inventory, Workforce, Documents). Advisory by default; deterministic numbers. Buildertrend via custom implementation; Procore early access.",
+  "version": "1.0.0",
+  "mcp": {
+    "endpoint": "https://topbuilderai.com/mcp",
+    "transport": "streamable-http",
+    "protocolVersion": "2025-06-18",
+    "authentication": "none",
+    "access": "read-only"
+  },
+  "tools": ["get_business", "list_agents", "list_services", "get_pricing", "get_platforms", "get_faq", "get_contact"],
+  "resources": ["topbuilderai://business", "topbuilderai://pricing", "topbuilderai://faq"],
+  "docs": "https://topbuilderai.com/llms.txt",
+  "provider": { "name": "Salisbury Bookkeeping LLC", "url": "https://salisburybookkeeping.com" },
+  "sameAs": ["https://salisburybookkeeping.com"]
+}

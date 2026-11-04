@@ -1,0 +1,320 @@
+rules_version = '2';
+
+// =============================================================================
+// BuilderCFO AI — Firestore Security Rules
+// =============================================================================
+// THIS FILE IS THE MULTI-TENANCY ENFORCEMENT LAYER.
+// A bug here is catastrophic — every change must be covered by a test in
+// apps/web/tests/firestore-rules.test.ts and reviewed by Cory.
+//
+// Authorization model:
+//   - Every user has custom claims set by the server: { tenantId, role }
+//   - Role one of: 'owner' | 'admin' | 'manager' | 'member' | 'field' | 'viewer'
+//   - Tenant-scoped data lives at /tenants/{tenantId}/<collection>/<doc>
+//   - Cross-tenant reads/writes are impossible by structural design
+//   - Tokens (Procore/QBO) and financial summaries are restricted to owner/admin
+//   - Mutations to integration-mirrored data are server-only (write: false)
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------------------
+    // Helper functions
+    // -------------------------------------------------------------------------
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function userTenantId() {
+      return request.auth.token.tenantId;
+    }
+
+    function userRole() {
+      return request.auth.token.role;
+    }
+
+    function hasRole(roles) {
+      return userRole() in roles;
+    }
+
+    function belongsToTenant(tenantId) {
+      return isAuthenticated() && userTenantId() == tenantId;
+    }
+
+    // FINANCIAL_VIEW permission: only owner + admin see company-wide
+    // cashflow, AR/AP aging, payroll totals. Managers see project-scoped data
+    // only (enforced via separate summaries).
+    function hasFinancialView() {
+      return hasRole(['owner', 'admin']);
+    }
+
+    // ADMIN_WRITE permission: only owner + admin can mutate tenant settings,
+    // users, integrations, billing.
+    function isAdmin() {
+      return hasRole(['owner', 'admin']);
+    }
+
+    // MANAGER_WRITE permission: owner + admin + manager can approve drafts,
+    // edit mappings, configure agents.
+    function isManagerOrAbove() {
+      return hasRole(['owner', 'admin', 'manager']);
+    }
+
+    // Helper: validate that an update only touched the allowed keys.
+    function diffOnlyTouches(allowedKeys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
+    }
+
+    // -------------------------------------------------------------------------
+    // Top-level: tenants
+    // -------------------------------------------------------------------------
+
+    match /tenants/{tenantId} {
+      allow read: if belongsToTenant(tenantId);
+      // Tenant doc updates limited to name, timezone, onboardingStep — billing
+      // and subscription fields are server-side (Stripe webhook) only.
+      allow update: if belongsToTenant(tenantId)
+                     && isAdmin()
+                     && diffOnlyTouches(['name', 'timezone', 'onboardingStep', 'updatedAt']);
+      allow create, delete: if false;  // server-only via Admin SDK
+
+      // ---------------------------------------------------------------------
+      // Users in tenant
+      // ---------------------------------------------------------------------
+      match /users/{userId} {
+        allow read: if belongsToTenant(tenantId);
+        // Self-update: any user can update their own notificationPreferences
+        // and fullName. Admin can update role + create/delete users.
+        allow update: if belongsToTenant(tenantId)
+                       && (
+                         (request.auth.uid == userId
+                          && diffOnlyTouches(['fullName', 'notificationPreferences', 'updatedAt']))
+                         || (isAdmin()
+                             && diffOnlyTouches(['fullName', 'role', 'notificationPreferences',
+                                                 'assignedProjectIds', 'updatedAt']))
+                       );
+        allow create, delete: if belongsToTenant(tenantId) && isAdmin();
+      }
+
+      // ---------------------------------------------------------------------
+      // Integration connections (sensitive: hold encrypted OAuth tokens)
+      // ---------------------------------------------------------------------
+      match /procoreConnection/{docId} {
+        // Read-only to owner/admin. Writes are server-only via Admin SDK
+        // because the document holds encrypted tokens.
+        allow read: if belongsToTenant(tenantId) && isAdmin();
+        allow write: if false;
+      }
+
+      match /qboConnection/{docId} {
+        allow read: if belongsToTenant(tenantId) && isAdmin();
+        allow write: if false;
+      }
+
+      // ---------------------------------------------------------------------
+      // Procore-mirrored data
+      // ALL writes are server-only — these collections are populated from
+      // sync workers (Cloud Run Jobs + Cloud Tasks).
+      // ---------------------------------------------------------------------
+      match /projects/{projectId}            { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /rfis/{rfiId}                    { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /dailyLogs/{logId}               { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /submittals/{id}                 { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /changeOrders/{coId}             { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /budgetLineItems/{itemId}        { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /costCodes/{codeId}              { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /directCosts/{costId}            { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /documents/{docId}               { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /vendors/{vId}                   { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /subcontractors/{subId}          { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /scheduleTasks/{taskId}          { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /payApps/{papId}                 { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /punchItems/{itemId}             { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /observations/{obsId}            { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /inspections/{inspId}            { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /meetings/{meetId}               { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /photos/{photoId}                { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /complianceDocuments/{docId}     { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /manpowerLogs/{logId}            { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /incidents/{id}                  { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /drawings/{id}                   { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /tasks/{id}                      { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /actionPlans/{id}                { allow read: if belongsToTenant(tenantId); allow write: if false; }
+
+      // ---------------------------------------------------------------------
+      // QBO-mirrored data — financial. Owner/admin only.
+      // ---------------------------------------------------------------------
+      match /qboAccounts/{id}                { allow read: if belongsToTenant(tenantId) && hasFinancialView(); allow write: if false; }
+      match /qboCustomers/{id}               { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /qboVendors/{id}                 { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /qboItems/{id}                   { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /qboInvoices/{id}                { allow read: if belongsToTenant(tenantId) && hasFinancialView(); allow write: if false; }
+      match /qboBills/{id}                   { allow read: if belongsToTenant(tenantId) && hasFinancialView(); allow write: if false; }
+      match /qboPayments/{id}                { allow read: if belongsToTenant(tenantId) && hasFinancialView(); allow write: if false; }
+      match /qboBillPayments/{id}            { allow read: if belongsToTenant(tenantId) && hasFinancialView(); allow write: if false; }
+      match /qboJournalEntries/{id}          { allow read: if belongsToTenant(tenantId) && hasFinancialView(); allow write: if false; }
+      match /qboDeposits/{id}                { allow read: if belongsToTenant(tenantId) && hasFinancialView(); allow write: if false; }
+      match /qboPurchases/{id}               { allow read: if belongsToTenant(tenantId) && hasFinancialView(); allow write: if false; }
+      match /qboClasses/{id}                 { allow read: if belongsToTenant(tenantId); allow write: if false; }
+      match /qboLocations/{id}               { allow read: if belongsToTenant(tenantId); allow write: if false; }
+
+      // ---------------------------------------------------------------------
+      // Entity mappings (Procore ↔ QBO)
+      // ---------------------------------------------------------------------
+      match /entityMappings/{mappingId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create, update, delete: if belongsToTenant(tenantId) && isManagerOrAbove();
+      }
+
+      // ---------------------------------------------------------------------
+      // Agent config (per tenant)
+      // ---------------------------------------------------------------------
+      match /tenantAgents/{agentSlug} {
+        allow read: if belongsToTenant(tenantId);
+        allow update: if belongsToTenant(tenantId) && isManagerOrAbove();
+        allow create, delete: if belongsToTenant(tenantId) && isAdmin();
+      }
+
+      // ---------------------------------------------------------------------
+      // Agent runs (audit log — read-only to tenant)
+      // ---------------------------------------------------------------------
+      match /agentRuns/{runId} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if false;  // server-only
+      }
+
+      // ---------------------------------------------------------------------
+      // Approvals (HITL queue)
+      // Approving/rejecting allowed for manager+. Full updates server-only.
+      // ---------------------------------------------------------------------
+      match /approvals/{approvalId} {
+        allow read: if belongsToTenant(tenantId);
+        allow update: if belongsToTenant(tenantId)
+                       && isManagerOrAbove()
+                       && diffOnlyTouches([
+                            'status', 'reviewedBy', 'reviewedAt',
+                            'rejectionReason', 'editedBody', 'updatedAt'
+                          ]);
+        allow create, delete: if false;  // server-only
+      }
+
+      // ---------------------------------------------------------------------
+      // Notifications — only the addressed user can mark as read
+      // ---------------------------------------------------------------------
+      match /notifications/{notifId} {
+        allow read: if belongsToTenant(tenantId)
+                     && (resource.data.userId == request.auth.uid
+                         || resource.data.userId == null);  // null = broadcast
+        allow update: if belongsToTenant(tenantId)
+                       && resource.data.userId == request.auth.uid
+                       && diffOnlyTouches(['readAt']);
+        allow create, delete: if false;  // server-only
+      }
+
+      // ---------------------------------------------------------------------
+      // Audit log — sensitive, owner/admin only
+      // ---------------------------------------------------------------------
+      match /auditLog/{logId} {
+        allow read: if belongsToTenant(tenantId) && isAdmin();
+        allow write: if false;
+      }
+
+      // ---------------------------------------------------------------------
+      // Usage events — owner/admin only
+      // ---------------------------------------------------------------------
+      match /usageEvents/{id} {
+        allow read: if belongsToTenant(tenantId) && isAdmin();
+        allow write: if false;
+      }
+
+      // ---------------------------------------------------------------------
+      // Chat conversations — owned by the user; manager+ only
+      // ---------------------------------------------------------------------
+      match /chatConversations/{conversationId} {
+        allow read, update: if belongsToTenant(tenantId)
+                             && resource.data.userId == request.auth.uid
+                             && isManagerOrAbove();
+        allow create: if belongsToTenant(tenantId) && isManagerOrAbove();
+        allow delete: if belongsToTenant(tenantId)
+                       && resource.data.userId == request.auth.uid;
+
+        match /messages/{messageId} {
+          allow read: if belongsToTenant(tenantId)
+                       && get(/databases/$(database)/documents/tenants/$(tenantId)/chatConversations/$(conversationId)).data.userId == request.auth.uid;
+          allow write: if false;  // server-only
+        }
+      }
+
+      // ---------------------------------------------------------------------
+      // Webhook event idempotency tracking — server-only
+      // ---------------------------------------------------------------------
+      match /webhookEventsSeen/{id} {
+        allow read, write: if false;
+      }
+
+      // ---------------------------------------------------------------------
+      // Summary documents (denormalized)
+      // Project health + agent activity readable by all tenant users.
+      // Cashflow / AR / AP aging restricted to owner/admin.
+      // ---------------------------------------------------------------------
+      match /summaries/{summaryId} {
+        allow read: if belongsToTenant(tenantId)
+                     && (
+                          summaryId == 'projectHealth'
+                          || summaryId == 'agentActivity'
+                          || hasFinancialView()
+                        );
+        allow write: if false;
+      }
+
+      // ---------------------------------------------------------------------
+      // System health (sync status) — readable by tenant
+      // ---------------------------------------------------------------------
+      match /systemHealth/{component} {
+        allow read: if belongsToTenant(tenantId);
+        allow write: if false;
+      }
+
+      // ---------------------------------------------------------------------
+      // Pending invitations
+      // ---------------------------------------------------------------------
+      match /invitations/{token} {
+        allow read: if belongsToTenant(tenantId) && isAdmin();
+        allow create: if belongsToTenant(tenantId) && isAdmin();
+        allow delete: if belongsToTenant(tenantId) && isAdmin();
+        allow update: if false;  // accept flow goes through server endpoint
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Top-level agent catalog — read-only to all authenticated users
+    // -------------------------------------------------------------------------
+    match /agentDefinitions/{slug} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Stripe webhook idempotency — server-only
+    // -------------------------------------------------------------------------
+    match /stripeWebhookEvents/{id} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // System health (cross-tenant) — server-only
+    // -------------------------------------------------------------------------
+    match /systemHealth/{component} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Default deny
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
